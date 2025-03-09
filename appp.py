@@ -1,7 +1,17 @@
 import streamlit as st
-import cv2
 import numpy as np
 from PIL import Image
+import importlib.util
+
+# Check if OpenCV is installed
+opencv_installed = importlib.util.find_spec("cv2") is not None
+
+if not opencv_installed:
+    st.error("OpenCV is not installed. Please run 'pip install opencv-python-headless'")
+    st.stop()
+
+# Only import OpenCV after confirming it's available
+import cv2
 
 def analyze_face(frame):
     # Initialize face detector
@@ -71,83 +81,95 @@ def analyze_face(frame):
             
             # Get region halves with minimal padding
             pad = 3
-            left_half = gray[start_y-pad:end_y+pad, x-pad:face_center_x+pad]
-            right_half = gray[start_y-pad:end_y+pad, face_center_x-pad:x+w+pad]
+            
+            # Make sure we don't go out of bounds
+            start_y_padded = max(0, start_y-pad)
+            end_y_padded = min(frame.shape[0], end_y+pad)
+            x_padded = max(0, x-pad)
+            face_center_x_padded = min(frame.shape[1], face_center_x+pad)
+            x_w_padded = min(frame.shape[1], x+w+pad)
+            
+            left_half = gray[start_y_padded:end_y_padded, x_padded:face_center_x_padded]
+            right_half = gray[start_y_padded:end_y_padded, face_center_x_padded:x_w_padded]
             
             # Skip this region if shape is invalid
             if left_half.size == 0 or right_half.size == 0:
                 continue
                 
-            right_half_flipped = cv2.flip(right_half, 1)
-            
-            # Ensure same size
-            min_width = min(left_half.shape[1], right_half_flipped.shape[1])
-            min_height = min(left_half.shape[0], right_half_flipped.shape[0])
-            
-            if min_width <= 0 or min_height <= 0:
-                continue
+            try:
+                right_half_flipped = cv2.flip(right_half, 1)
                 
-            left_half = left_half[:min_height, :min_width]
-            right_half_flipped = right_half_flipped[:min_height, :min_width]
-            
-            # Multiple detailed metrics
-            # Structural similarity
-            diff = cv2.absdiff(left_half, right_half_flipped)
-            mse = np.mean(diff ** 2)
-            ssim = 1 - (mse / (255 * 255))
-            
-            # Edge analysis with multiple directions
-            left_edges_x = cv2.Sobel(left_half, cv2.CV_64F, 1, 0)
-            right_edges_x = cv2.Sobel(right_half_flipped, cv2.CV_64F, 1, 0)
-            left_edges_y = cv2.Sobel(left_half, cv2.CV_64F, 0, 1)
-            right_edges_y = cv2.Sobel(right_half_flipped, cv2.CV_64F, 0, 1)
-            
-            edge_similarity_x = 1 - np.mean(np.abs(left_edges_x - right_edges_x)) / 255
-            edge_similarity_y = 1 - np.mean(np.abs(left_edges_y - right_edges_y)) / 255
-            
-            # Texture analysis
-            left_texture = cv2.Laplacian(left_half, cv2.CV_64F)
-            right_texture = cv2.Laplacian(right_half_flipped, cv2.CV_64F)
-            texture_similarity = 1 - np.mean(np.abs(left_texture - right_texture)) / 255
-            
-            # Gradient magnitude similarity
-            left_grad_mag = np.sqrt(left_edges_x**2 + left_edges_y**2)
-            right_grad_mag = np.sqrt(right_edges_x**2 + right_edges_y**2)
-            gradient_similarity = 1 - np.mean(np.abs(left_grad_mag - right_grad_mag)) / 255
-            
-            # Store detailed metrics
-            detailed_metrics[region_name] = {
-                'structural': float(ssim),
-                'edge_x': float(edge_similarity_x),
-                'edge_y': float(edge_similarity_y),
-                'texture': float(texture_similarity),
-                'gradient': float(gradient_similarity)
-            }
-            
-            # Combined weighted score
-            region_score = (
-                0.25 * ssim +
-                0.2 * edge_similarity_x +
-                0.2 * edge_similarity_y +
-                0.15 * texture_similarity +
-                0.2 * gradient_similarity
-            )
-            region_scores[region_name] = float(region_score)
-            
-            # Draw detailed analysis lines
-            # Horizontal region boundaries
-            cv2.line(overlay, (x, start_y), (x+w, start_y), (255, 255, 255), 1)
-            
-            # Vertical analysis lines with varying density
-            num_verticals = int(12 * (end_pct - start_pct))  # More lines in important regions
-            for i in range(num_verticals):
-                vert_x = x + (w * i // (num_verticals-1))
-                color = (
-                    int(255 * (1 - region_score)),
-                    int(255 * region_score),
-                    0
+                # Ensure same size
+                min_width = min(left_half.shape[1], right_half_flipped.shape[1])
+                min_height = min(left_half.shape[0], right_half_flipped.shape[0])
+                
+                if min_width <= 0 or min_height <= 0:
+                    continue
+                    
+                left_half = left_half[:min_height, :min_width]
+                right_half_flipped = right_half_flipped[:min_height, :min_width]
+                
+                # Multiple detailed metrics
+                # Structural similarity
+                diff = cv2.absdiff(left_half, right_half_flipped)
+                mse = np.mean(diff ** 2)
+                ssim = 1 - (mse / (255 * 255))
+                
+                # Edge analysis with multiple directions
+                left_edges_x = cv2.Sobel(left_half, cv2.CV_64F, 1, 0)
+                right_edges_x = cv2.Sobel(right_half_flipped, cv2.CV_64F, 1, 0)
+                left_edges_y = cv2.Sobel(left_half, cv2.CV_64F, 0, 1)
+                right_edges_y = cv2.Sobel(right_half_flipped, cv2.CV_64F, 0, 1)
+                
+                edge_similarity_x = 1 - np.mean(np.abs(left_edges_x - right_edges_x)) / 255
+                edge_similarity_y = 1 - np.mean(np.abs(left_edges_y - right_edges_y)) / 255
+                
+                # Texture analysis
+                left_texture = cv2.Laplacian(left_half, cv2.CV_64F)
+                right_texture = cv2.Laplacian(right_half_flipped, cv2.CV_64F)
+                texture_similarity = 1 - np.mean(np.abs(left_texture - right_texture)) / 255
+                
+                # Gradient magnitude similarity
+                left_grad_mag = np.sqrt(left_edges_x**2 + left_edges_y**2)
+                right_grad_mag = np.sqrt(right_edges_x**2 + right_edges_y**2)
+                gradient_similarity = 1 - np.mean(np.abs(left_grad_mag - right_grad_mag)) / 255
+                
+                # Store detailed metrics
+                detailed_metrics[region_name] = {
+                    'structural': float(ssim),
+                    'edge_x': float(edge_similarity_x),
+                    'edge_y': float(edge_similarity_y),
+                    'texture': float(texture_similarity),
+                    'gradient': float(gradient_similarity)
+                }
+                
+                # Combined weighted score
+                region_score = (
+                    0.25 * ssim +
+                    0.2 * edge_similarity_x +
+                    0.2 * edge_similarity_y +
+                    0.15 * texture_similarity +
+                    0.2 * gradient_similarity
                 )
-                cv2.line(overlay, (vert_x, start_y), (vert_x, end_y), color, 1)
+                region_scores[region_name] = float(region_score)
+                
+                # Draw detailed analysis lines
+                # Horizontal region boundaries
+                cv2.line(overlay, (x, start_y), (x+w, start_y), (255, 255, 255), 1)
+                
+                # Vertical analysis lines with varying density
+                num_verticals = int(12 * (end_pct - start_pct))  # More lines in important regions
+                for i in range(num_verticals):
+                    vert_x = x + (w * i // max(1, num_verticals-1))
+                    color = (
+                        int(255 * (1 - region_score)),
+                        int(255 * region_score),
+                        0
+                    )
+                    cv2.line(overlay, (vert_x, start_y), (vert_x, end_y), color, 1)
+            except Exception as e:
+                st.error(f"Error analyzing region {region_name}: {str(e)}")
+                continue
         
         # Draw rectangle around face and symmetry line
         cv2.rectangle(overlay, (x, y), (x+w, y+h), (255, 255, 255), 1)
@@ -160,7 +182,7 @@ def analyze_face(frame):
             # Display overall score
             score_text = f"Symmetry: {symmetry_score:.3f}"
             text_size = cv2.getTextSize(score_text, cv2.FONT_HERSHEY_SIMPLEX, 0.7, 2)[0]
-            text_x = frame.shape[1] - text_size[0] - 10
+            text_x = max(10, frame.shape[1] - text_size[0] - 10)
             cv2.putText(overlay, 
                       score_text,
                       (text_x, 30),
@@ -188,52 +210,66 @@ def main():
     st.title("Face Symmetry Analyzer")
     st.write("This app analyzes facial symmetry using computer vision techniques.")
     
+    # Add configuration options
+    st.sidebar.title("Configuration")
+    use_webcam = st.sidebar.checkbox("Use Webcam", value=False)
+    
     col1, col2 = st.columns([2, 1])
     
     with col1:
-        st.subheader("Camera Input")
-        run_analysis = st.checkbox("Start Analysis")
-        
-        if run_analysis:
-            stframe = st.empty()
-            vid_cap = cv2.VideoCapture(0)
+        if use_webcam:
+            st.subheader("Camera Input")
+            run_analysis = st.checkbox("Start Analysis", value=False)
             
-            # Set camera properties
-            vid_cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
-            vid_cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
-            vid_cap.set(cv2.CAP_PROP_FPS, 30)
-            
-            metrics_placeholder = st.empty()
-            
-            while run_analysis:
-                success, img = vid_cap.read()
-                if success:
-                    img = cv2.flip(img, 1)
-                    result_img, scores = analyze_face(img)
-                    stframe.image(result_img, channels="BGR", use_column_width=True)
+            if run_analysis:
+                try:
+                    stframe = st.empty()
+                    vid_cap = cv2.VideoCapture(0)
                     
-                    if scores:
-                        with metrics_placeholder.container():
-                            st.subheader(f"Overall Symmetry: {scores['overall']:.3f}")
+                    # Check if camera opened successfully
+                    if not vid_cap.isOpened():
+                        st.error("Failed to open camera. Please check your camera connection.")
+                        st.stop()
+                    
+                    # Set camera properties
+                    vid_cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+                    vid_cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+                    vid_cap.set(cv2.CAP_PROP_FPS, 30)
+                    
+                    metrics_placeholder = st.empty()
+                    
+                    while run_analysis:
+                        success, img = vid_cap.read()
+                        if success:
+                            img = cv2.flip(img, 1)
+                            result_img, scores = analyze_face(img)
+                            stframe.image(result_img, channels="BGR", use_column_width=True)
                             
-                            # Create color for the score (red to green)
-                            color = f"rgb({int(255*(1-scores['overall']))}, {int(255*scores['overall'])}, 0)"
-                            st.markdown(f"<div style='background-color: {color}; padding: 10px; border-radius: 5px;'>"
-                                      f"<h3 style='color: white; text-align: center;'>{scores['overall']:.3f}</h3>"
-                                      f"</div>", unsafe_allow_html=True)
-                else:
-                    st.error("Failed to access camera")
-                    break
-                
-            vid_cap.release()
-        else:
-            st.info("Check the box above to start the camera analysis")
-            
-            # Upload option as an alternative
-            st.subheader("Or upload an image")
-            uploaded_file = st.file_uploader("Choose an image...", type=["jpg", "jpeg", "png"])
-            
-            if uploaded_file is not None:
+                            if scores:
+                                with metrics_placeholder.container():
+                                    st.subheader(f"Overall Symmetry: {scores['overall']:.3f}")
+                                    
+                                    # Create color for the score (red to green)
+                                    color = f"rgb({int(255*(1-scores['overall']))}, {int(255*scores['overall'])}, 0)"
+                                    st.markdown(f"<div style='background-color: {color}; padding: 10px; border-radius: 5px;'>"
+                                              f"<h3 style='color: white; text-align: center;'>{scores['overall']:.3f}</h3>"
+                                              f"</div>", unsafe_allow_html=True)
+                        else:
+                            st.error("Failed to read from camera")
+                            break
+                    
+                    vid_cap.release()
+                except Exception as e:
+                    st.error(f"Error with webcam: {str(e)}")
+            else:
+                st.info("Check the box above to start the camera analysis")
+        
+        # Always show upload option
+        st.subheader("Upload an image for analysis")
+        uploaded_file = st.file_uploader("Choose an image...", type=["jpg", "jpeg", "png"])
+        
+        if uploaded_file is not None:
+            try:
                 image = Image.open(uploaded_file)
                 img_array = np.array(image)
                 
@@ -253,6 +289,10 @@ def main():
                     st.markdown(f"<div style='background-color: {color}; padding: 10px; border-radius: 5px;'>"
                               f"<h3 style='color: white; text-align: center;'>{scores['overall']:.3f}</h3>"
                               f"</div>", unsafe_allow_html=True)
+                else:
+                    st.warning("No faces detected in the image. Please try another image or adjust your camera.")
+            except Exception as e:
+                st.error(f"Error processing image: {str(e)}")
     
     with col2:
         st.subheader("About Face Symmetry")
@@ -285,6 +325,16 @@ def main():
             4. Calculates symmetry using multiple metrics
             
             The weighted combination of these metrics produces region scores, which are averaged for an overall symmetry score.
+            """)
+        
+        with st.expander("Troubleshooting"):
+            st.write("""
+            Common issues:
+            
+            1. **No face detected**: Make sure you're in good lighting and facing the camera
+            2. **Camera not working**: Try refreshing the page or checking camera permissions
+            3. **Poor symmetry score**: Try adjusting your position and lighting
+            4. **App crashes**: Please report the issue with details about your browser and system
             """)
 
 if __name__ == "__main__":
